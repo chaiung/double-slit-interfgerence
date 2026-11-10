@@ -174,13 +174,28 @@
                     <input type="range" id="sliderL" min="0.5" max="3.0" step="0.05" value="1.2" class="w-full accent-indigo-500 bg-slate-800 h-1.5 rounded-lg appearance-none cursor-pointer">
                 </div>
 
+                <!-- Brightness / Gain Control -->
+                <div class="space-y-1.5 bg-indigo-950/40 p-3 rounded-lg border border-indigo-500/20">
+                    <div class="flex justify-between text-xs">
+                        <span class="text-indigo-200 font-semibold flex items-center gap-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                            </svg>
+                            亮度增益 / 曝光 (Exposure Gain)
+                        </span>
+                        <span class="code-font text-amber-400 font-bold" id="valGain">5.0 x</span>
+                    </div>
+                    <input type="range" id="sliderGain" min="1" max="30" step="0.5" value="5.0" class="w-full accent-amber-500 bg-slate-800 h-1.5 rounded-lg appearance-none cursor-pointer">
+                    <p class="text-[11px] text-slate-400">調高增益可使中央主極大外側微弱的<b>第一繞射副極大 (Diffraction Secondary Peak)</b> 變清晰。</p>
+                </div>
+
                 <!-- Zoom / Scale -->
                 <div class="space-y-1.5">
                     <div class="flex justify-between text-xs">
                         <span class="text-slate-300 font-medium">觀察視野範圍 (Screen Field Range)</span>
-                        <span class="code-font text-indigo-400 font-bold" id="valScale">± 3.0 cm</span>
+                        <span class="code-font text-indigo-400 font-bold" id="valScale">± 5.0 cm</span>
                     </div>
-                    <input type="range" id="sliderScale" min="0.5" max="8.0" step="0.1" value="3.0" class="w-full accent-indigo-500 bg-slate-800 h-1.5 rounded-lg appearance-none cursor-pointer">
+                    <input type="range" id="sliderScale" min="0.5" max="10.0" step="0.1" value="5.0" class="w-full accent-indigo-500 bg-slate-800 h-1.5 rounded-lg appearance-none cursor-pointer">
                 </div>
 
             </div>
@@ -195,10 +210,11 @@
         const state = {
             isWhiteLight: true,
             wavelength: 633, // nm for monochromatic
-            d: 120, // um (slit separation)
-            a: 30,  // um (slit width)
+            d: 100, // um (slit separation)
+            a: 15,  // um (slit width)
             L: 1.2, // m (screen distance)
-            screenMaxY: 0.03, // m (field of view radius, e.g. 3cm -> -3cm to +3cm)
+            gain: 5.0, // Brightness multiplier gain
+            screenMaxY: 0.05, // m (field of view radius, e.g. 5cm -> -5cm to +5cm)
             showRGBChannels: false
         };
 
@@ -215,6 +231,8 @@
         const valA = document.getElementById('valA');
         const sliderL = document.getElementById('sliderL');
         const valL = document.getElementById('valL');
+        const sliderGain = document.getElementById('sliderGain');
+        const valGain = document.getElementById('valGain');
         const sliderScale = document.getElementById('sliderScale');
         const valScale = document.getElementById('valScale');
 
@@ -301,9 +319,15 @@
                 const lambda_m = state.wavelength * 1e-9;
                 const I = calculateIntensity(y, d_m, a_m, L_m, lambda_m);
                 const [r, g, b] = wavelengthToRGB(state.wavelength);
-                return { r: r * I, g: g * I, b: b * I, total: I };
+                return { 
+                    r: Math.min(1.0, r * I * state.gain), 
+                    g: Math.min(1.0, g * I * state.gain), 
+                    b: Math.min(1.0, b * I * state.gain), 
+                    total: Math.min(1.0, I * state.gain),
+                    rawI: I
+                };
             } else {
-                let sumR = 0, sumG = 0, sumB = 0;
+                let sumR = 0, sumG = 0, sumB = 0, sumI = 0;
                 let norm = whiteLightSpectrum.length;
 
                 for (let i = 0; i < norm; i++) {
@@ -312,15 +336,17 @@
                     sumR += item.r * I;
                     sumG += item.g * I;
                     sumB += item.b * I;
+                    sumI += I;
                 }
 
-                const scale = 1.8 / norm;
-                const r = Math.min(1.0, sumR * scale);
-                const g = Math.min(1.0, sumG * scale);
-                const b = Math.min(1.0, sumB * scale);
-                const total = (r + g + b) / 3;
+                const baseScale = (1.8 / norm) * state.gain;
+                const r = Math.min(1.0, sumR * baseScale);
+                const g = Math.min(1.0, sumG * baseScale);
+                const b = Math.min(1.0, sumB * baseScale);
+                const rawI = sumI / norm;
+                const total = Math.min(1.0, rawI * state.gain);
 
-                return { r, g, b, total };
+                return { r, g, b, total, rawI };
             }
         }
 
@@ -342,10 +368,10 @@
 
                 const rgb = getRGBForY(physY);
 
-                const gamma = 0.8;
-                const rByte = Math.floor(Math.pow(Math.min(1, rgb.r), gamma) * 255);
-                const gByte = Math.floor(Math.pow(Math.min(1, rgb.g), gamma) * 255);
-                const bByte = Math.floor(Math.pow(Math.min(1, rgb.b), gamma) * 255);
+                const gamma = 0.85;
+                const rByte = Math.floor(Math.pow(rgb.r, gamma) * 255);
+                const gByte = Math.floor(Math.pow(rgb.g, gamma) * 255);
+                const bByte = Math.floor(Math.pow(rgb.b, gamma) * 255);
 
                 for (let y = 0; y < height; y++) {
                     const idx = (y * width + x) * 4;
@@ -393,7 +419,7 @@
                             max: 1.05,
                             grid: { color: '#1e293b' },
                             ticks: { color: '#64748b', font: { family: 'Fira Code', size: 10 } },
-                            title: { display: true, text: '相對強度 I / I₀', color: '#64748b', font: { size: 11 } }
+                            title: { display: true, text: '相對強度 (含增益)', color: '#64748b', font: { size: 11 } }
                         }
                     },
                     plugins: {
@@ -413,7 +439,7 @@
         function updateChart() {
             if (!intensityChart) return;
 
-            const samples = 250;
+            const samples = 300;
             const labels = [];
             const dataTotal = [];
             const dataR = [];
@@ -484,7 +510,7 @@
 
                 intensityChart.data.datasets = [
                     {
-                        label: state.isWhiteLight ? '白光總強度' : `單色光 (${state.wavelength} nm) 強度`,
+                        label: state.isWhiteLight ? `白光增益強度 (${state.gain}x)` : `單色光 (${state.wavelength} nm) 增益強度 (${state.gain}x)`,
                         data: dataTotal,
                         borderColor: strokeColor,
                         backgroundColor: strokeColor.replace('rgb', 'rgba').replace(')', ', 0.15)'),
@@ -562,6 +588,12 @@
                 renderAll();
             });
 
+            sliderGain.addEventListener('input', (e) => {
+                state.gain = parseFloat(e.target.value);
+                valGain.textContent = `${state.gain.toFixed(1)} x`;
+                renderAll();
+            });
+
             sliderScale.addEventListener('input', (e) => {
                 const cm = parseFloat(e.target.value);
                 state.screenMaxY = cm / 100;
@@ -577,22 +609,25 @@
             btnReset.addEventListener('click', () => {
                 state.isWhiteLight = true;
                 state.wavelength = 633;
-                state.d = 120;
-                state.a = 30;
+                state.d = 100;
+                state.a = 15;
                 state.L = 1.2;
-                state.screenMaxY = 0.03;
+                state.gain = 5.0;
+                state.screenMaxY = 0.05;
                 state.showRGBChannels = false;
 
                 sliderWavelength.value = 633;
                 valWavelength.textContent = "633.0 nm";
-                sliderD.value = 120;
-                valD.textContent = "120.0 μm";
-                sliderA.value = 30;
-                valA.textContent = "30.0 μm";
+                sliderD.value = 100;
+                valD.textContent = "100.0 μm";
+                sliderA.value = 15;
+                valA.textContent = "15.0 μm";
                 sliderL.value = 1.2;
                 valL.textContent = "1.20 m";
-                sliderScale.value = 3.0;
-                valScale.textContent = "± 3.0 cm";
+                sliderGain.value = 5.0;
+                valGain.textContent = "5.0 x";
+                sliderScale.value = 5.0;
+                valScale.textContent = "± 5.0 cm";
                 chkRGBChannels.checked = false;
 
                 btnWhiteLight.click();
